@@ -4,4 +4,13 @@ async function get(path) {
   if (!response.ok) throw new Error(`API returned ${response.status}`);
   return response.json();
 }
-export const api = { health: () => get('/health'), stats: () => get('/stats'), alerts: () => get('/alerts'), ips: () => get('/ips'), logs: (query = '') => get(`/logs?limit=1000${query}`) };
+async function post(path, body) {
+  const response = await fetch(`${BASE}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!response.ok) throw new Error(`API returned ${response.status}`);
+  return response.json();
+}
+export const api = {
+  health: () => get('/health'), datasets: () => get('/datasets'), datasetStats: () => get('/datasets/stats'),
+  selectDataset: source => post('/datasets/select', { source }), stats: () => get('/stats'), alerts: () => get('/alerts'),
+  ips: () => get('/ips'), activity: () => get('/activity'), logs: (query = '') => get(`/logs?limit=1000${query}`)
+};
