@@ -46,7 +46,7 @@ def detect_alerts(events: Iterable[LogEvent], failed_threshold: int = 5,
             if len(window) >= failed_threshold and (event.ip, "suspicious_success") not in seen:
                 seen.add((event.ip, "suspicious_success"))
                 alerts.append(Alert(event.ip, "Suspicious successful login", "CRITICAL", ts.isoformat(),
-                                    f"Successful login followed {len(window)} failed attempts within 2 minutes."))
+                                    f"Successful login followed {len(window)} failed attempts within {failed_window.total_seconds():g} seconds."))
         elif event.event_type == "request":
             window = requests[event.ip]
             window.append(ts)

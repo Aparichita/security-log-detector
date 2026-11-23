@@ -5,6 +5,7 @@ venv/
 .pytest_cache/
 .coverage
 node_modules/
+.npm-cache/
 dist/
 .env
 *.log.*

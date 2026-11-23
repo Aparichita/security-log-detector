@@ -62,7 +62,9 @@ def logs(limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0), e
 @app.get("/ips")
 def ips():
     events, _ = dataset()
-    alert_counts = Counter(alert.ip for alert in detect_alerts(events))
+    detected = detect_alerts(events)
+    alert_counts = Counter(alert.ip for alert in detected)
+    critical_ips = {alert.ip for alert in detected if alert.severity == "CRITICAL"}
     grouped: dict[str, list[LogEvent]] = defaultdict(list)
     for event in events:
         grouped[event.ip].append(event)
@@ -70,6 +72,6 @@ def ips():
     for ip, items in grouped.items():
         counts = Counter(event.event_type for event in items)
         num_alerts = alert_counts[ip]
-        risk = "critical" if any(a.ip == ip and a.severity == "CRITICAL" for a in detect_alerts(events)) else "high" if num_alerts else "low"
+        risk = "critical" if ip in critical_ips else "high" if num_alerts else "low"
         result.append({"ip": ip, "total_events": len(items), "failed_logins": counts["login_failure"], "successful_logins": counts["login_success"], "requests": counts["request"], "alerts": num_alerts, "risk_level": risk})
     return sorted(result, key=lambda row: (row["alerts"], row["total_events"]), reverse=True)
