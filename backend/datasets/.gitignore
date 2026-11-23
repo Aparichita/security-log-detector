@@ -1,0 +1,8 @@
+*
+!.gitignore
+!.gitkeep
+!README.md
+!openssh/
+!nasa/
+openssh/*
+nasa/*

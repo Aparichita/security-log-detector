@@ -1,4 +1,4 @@
-"""Parsing helpers for the synthetic security event log."""
+"""Common normalized event schema and JSONL parser for synthetic data."""
 from __future__ import annotations
 
 import json
@@ -17,10 +17,13 @@ class LogEvent:
     method: str | None = None
     path: str | None = None
     status: int | None = None
+    response_size: int | None = None
+    source: str = "synthetic"
 
     def to_dict(self) -> dict:
         return {"timestamp": self.timestamp.isoformat(), "ip": self.ip, "username": self.username,
-                "event_type": self.event_type, "method": self.method, "path": self.path, "status": self.status}
+                "event_type": self.event_type, "method": self.method, "path": self.path, "status": self.status,
+                "response_size": self.response_size, "source": self.source}
 
 
 def parse_line(line: str) -> LogEvent:
@@ -33,7 +36,7 @@ def parse_line(line: str) -> LogEvent:
             raise ValueError("ip, username, and event_type must be non-empty strings")
         if event_type not in {"login_success", "login_failure", "request"}:
             raise ValueError(f"unsupported event type: {event_type}")
-        return LogEvent(timestamp, ip, username, event_type, row.get("method"), row.get("path"), row.get("status"))
+        return LogEvent(timestamp, ip, username, event_type, row.get("method"), row.get("path"), row.get("status"), row.get("response_size"), "synthetic")
     except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as exc:
         raise ValueError(f"invalid log entry: {exc}") from exc
 
