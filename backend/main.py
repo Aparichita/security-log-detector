@@ -1,77 +1,87 @@
-"""FastAPI service for inspecting synthetic security logs and rule alerts."""
+"""FastAPI endpoints over cached, normalized dataset snapshots."""
 from __future__ import annotations
-from collections import Counter, defaultdict
-from pathlib import Path
+import argparse
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from detector import detect_alerts
-from parser import LogEvent, read_log
+from pydantic import BaseModel
+import uvicorn
 
-BASE_DIR = Path(__file__).resolve().parent
-LOG_PATH = BASE_DIR / "auth.log"
-app = FastAPI(title="Security Log Detector API", version="1.0.0")
+from dataset_manager import SOURCES, manager
+
+app = FastAPI(title="Security Log Detector API", version="2.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], allow_methods=["*"], allow_headers=["*"])
 
+class SourceSelection(BaseModel):
+    source: str
 
-def dataset() -> tuple[list[LogEvent], int]:
-    try:
-        return read_log(LOG_PATH)
-    except FileNotFoundError as exc:
-        raise HTTPException(503, "Log dataset is missing. Run generate_logs.py first.") from exc
-
+def snapshot():
+    return manager.get()
 
 @app.get("/")
 def root():
     return {"name": "Security Log Detector API", "message": "Service is running", "docs": "/docs"}
 
-
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    current = snapshot()
+    return {"status": "ok", "dataset_status": current.status, "source": current.source}
 
+@app.get("/datasets")
+def datasets():
+    current = snapshot()
+    available = []
+    for key, meta in SOURCES.items():
+        files = manager._files(key)
+        available.append({"source": key, "name": meta["name"], "installed": all(path.is_file() for path in files)})
+    return {**current.info(), "available_datasets": available}
+
+@app.get("/datasets/stats")
+def dataset_stats():
+    current = snapshot()
+    return {"source": current.source, "status": current.status, **(current.stats or {})}
+
+@app.post("/datasets/select")
+def select_dataset(selection: SourceSelection):
+    try:
+        return manager.select(selection.source).info()
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 @app.get("/alerts")
 def alerts(severity: str | None = None):
-    events, _ = dataset()
-    rows = [item.to_dict() for item in detect_alerts(events)]
+    rows = snapshot().alerts or []
     if severity:
         rows = [row for row in rows if row["severity"].lower() == severity.lower()]
     return rows
 
-
 @app.get("/stats")
 def stats():
-    events, malformed = dataset()
-    counts = Counter(event.event_type for event in events)
-    alert_counts = Counter(alert.severity for alert in detect_alerts(events))
-    return {"total_logs": len(events), "malformed_lines": malformed, "total_alerts": sum(alert_counts.values()),
-            "critical_alerts": alert_counts["CRITICAL"], "high_alerts": alert_counts["HIGH"], "medium_alerts": alert_counts["MEDIUM"],
-            "unique_ips": len({event.ip for event in events}), "failed_logins": counts["login_failure"],
-            "successful_logins": counts["login_success"], "request_events": counts["request"]}
+    return snapshot().stats or {}
 
+@app.get("/activity")
+def activity():
+    return snapshot().activity or []
 
 @app.get("/logs")
 def logs(limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0), event_type: str | None = None, ip: str | None = None):
-    events, _ = dataset()
+    current = snapshot()
+    if current.source == "nasa":
+        return {"items": [], "total": 0, "limit": limit, "offset": offset, "privacy_limited": True,
+                "message": "NASA request-level records are withheld; only anonymous aggregates are available."}
     if event_type and event_type not in {"login_success", "login_failure", "request"}:
         raise HTTPException(422, "Unsupported event_type")
-    filtered = [event for event in events if (not event_type or event.event_type == event_type) and (not ip or event.ip == ip)]
-    return {"items": [event.to_dict() for event in filtered[offset:offset + limit]], "total": len(filtered), "limit": limit, "offset": offset}
-
+    rows = [row for row in (current.logs or []) if (not event_type or row["event_type"] == event_type) and (not ip or row["ip"] == ip)]
+    return {"items": rows[offset:offset + limit], "total": len(rows), "limit": limit, "offset": offset}
 
 @app.get("/ips")
 def ips():
-    events, _ = dataset()
-    detected = detect_alerts(events)
-    alert_counts = Counter(alert.ip for alert in detected)
-    critical_ips = {alert.ip for alert in detected if alert.severity == "CRITICAL"}
-    grouped: dict[str, list[LogEvent]] = defaultdict(list)
-    for event in events:
-        grouped[event.ip].append(event)
-    result = []
-    for ip, items in grouped.items():
-        counts = Counter(event.event_type for event in items)
-        num_alerts = alert_counts[ip]
-        risk = "critical" if ip in critical_ips else "high" if num_alerts else "low"
-        result.append({"ip": ip, "total_events": len(items), "failed_logins": counts["login_failure"], "successful_logins": counts["login_success"], "requests": counts["request"], "alerts": num_alerts, "risk_level": risk})
-    return sorted(result, key=lambda row: (row["alerts"], row["total_events"]), reverse=True)
+    return snapshot().ips or []
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Start the Security Log Detector API")
+    parser.add_argument("--source", choices=sorted(SOURCES), default=manager.source)
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
+    manager.select(args.source)
+    uvicorn.run(app, host=args.host, port=args.port)
